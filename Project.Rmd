@@ -1,0 +1,129 @@
+---
+title: "Practical Machine Learning for Human Activity Recognition"
+author: "Hong Xu"
+date: "September 20, 2014"
+output: html_document
+---
+
+Human activity can be easily monitored by inexpensive devices. Large data are collected and freely available to public. Here we get data from [HAR project](http://groupware.les.inf.puc-rio.br/har). We apply practical machine learning approach to predict human activity type from monitor device data. The machine learning method that we use is **random forest**. We achieve accuracy of 99.9%. And we predict all 20 test cases correctly.
+
+##Data loading
+We download the following data from course web site:
+
+* _Training data_: [pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+* _Test data_: [pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+We load data in R using `read.csv()` function. 
+
+```{r loadData, cache=TRUE}
+##### read data
+allData <- read.csv("pml-training.csv")
+testCase <- read.csv("pml-testing.csv")
+```
+
+Training data have `r dim(allData)[1]` observations of `r dim(allData)[2]` variables. Test data have `r dim(testCase)[1]` observations of `r dim(testCase)[2]` variables.
+
+
+##Data pre-processing
+
+Because of its high accuracy, we plan to use **random forest** method to learn the data. Random forest is sensitive to _zero-_ or _near zero-variance_ predictors. We remove _near zero-variance_ variables from both training and test data.
+
+```{r removeNearZero, cache=TRUE}
+# load library
+library(caret)
+set.seed(123)
+
+# remove near zero variance columns from both test case and training data
+nzCols <- nearZeroVar(testCase)
+rmNzTest <- testCase[,-nzCols]
+rmNzData <- allData[,-nzCols]
+```
+
+Also some variables apparently have no prediction values. We remove the 5 variables from both training and test data to create clean train and test data. 
+
+* *X*: row number in column 1.
+* *user_name*: user name in column 2.
+* *raw_timestamp_part_1*: raw timestamp (part 1) in column 3.
+* *raw_timestamp_part_2*: raw timestamp (part 2) in column 4.
+* *cvtd_timestamp*: human readable timestamp in column 5.
+
+```{r remove5Variables, cache=TRUE}
+# remove variables which have no prediction value
+# such as record number, user name, record times, record window
+clnData <- rmNzData[,-c(1:5)]
+clnTest <- rmNzTest[,-c(1:5)]
+```
+
+
+##Data partition
+
+We split the whole training data set into two parts: one for training the model, the othe for evaluating the model. We use 75% of the data for training, the rest 25% for testing.
+
+```{r splitData, cache=TRUE}
+# split data: 75% for taining, 25% for testing
+inTrain <- createDataPartition(y = clnData$classe,
+                               p = .75,
+                               list = FALSE)
+training <- clnData[inTrain,]
+testing <- clnData[-inTrain,]
+nrow(training)
+nrow(testing)
+```
+
+##Model training
+To speed up the training process, we use the parallel computing package `doMC` from [Revolution Analytics](http://revolutionanalytics.com/). To train the model, we use outcome (`classe`) verse all other variables. The in training pre-processing includes the simple normalization techniques: `center` and `scale`.
+
+```{r trainModel, cache=TRUE}
+library(doMC)
+registerDoMC(cores = 3)
+
+library(randomForest)
+rfFit <- train(classe ~ .,
+             data = training,
+             method = "rf",
+             preProc = c("center", "scale"))
+```
+
+The best model is `mtry = 27`, with `accuracy = 0.996` and `Kappa = 0.995`.
+```{r fitModel, cache=TRUE}
+rfFit
+```
+
+We plot the model fitting process below. When number of selected predictor is 27, the accuracy peaks at 0.996.
+```{r plotModel, cache=TRUE}
+plot(rfFit)
+```
+
+##Testing and evaluation
+We apply the trained model from above process to the 25% testing data. The prediction result is compared with known classes. The overall accuracy is 0.999. The sensitivity and specificity for each class are larger than 0.99.
+
+```{r testData, cache=TRUE}
+##### prediction test
+rfClasses <- predict(rfFit, newdata = testing)
+
+# prediction evaluation
+cfMtrx <- confusionMatrix(rfClasses, testing$classe)
+cfMtrx
+```
+
+##Predicting test case
+Finally we apply the model to the 20 testing cases. The predicted results are put into files and submitted to the course web site. All the 20 predictions are correct.
+
+```{r predCase, cache=TRUE}
+##### predict 20 test cases
+rfPreds <- predict(rfFit, newdata=clnTest[,-54])
+print("The prediction of 20 test cases:")
+rfPreds
+
+# function to write prediction in file
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+# write prediction in files
+pml_write_files(rfPreds)
+```
